@@ -26,7 +26,7 @@ import org.catacombae.io.RuntimeIOException;
  */
 public class ReadableRandomAccessSubstream extends BasicReadableRandomAccessStream {
     private SynchronizedReadableRandomAccess sourceStream;
-    private long internalFP;
+    protected long internalFP;
     
     public ReadableRandomAccessSubstream(SynchronizedReadableRandomAccess iSourceStream) {
         this.sourceStream = iSourceStream;

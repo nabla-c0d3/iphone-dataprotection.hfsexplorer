@@ -24,6 +24,7 @@ import java.io.FileOutputStream;
 import java.io.PrintStream;
 import org.catacombae.dmgextractor.encodings.encrypted.ReadableCEncryptedEncodingStream;
 import org.catacombae.hfsexplorer.IOUtil;
+import org.catacombae.hfsexplorer.iphone.EMF;
 import org.catacombae.hfsexplorer.UDIFRecognizer;
 import org.catacombae.hfsexplorer.fs.AppleSingleBuilder;
 import org.catacombae.hfsexplorer.fs.AppleSingleBuilder.AppleSingleVersion;
@@ -53,6 +54,7 @@ import org.catacombae.jparted.lib.ps.PartitionSystemHandlerFactory;
 import org.catacombae.jparted.lib.ps.PartitionSystemType;
 import org.catacombae.jparted.lib.ps.PartitionType;
 import org.catacombae.udif.UDIFRandomAccessStream;
+import org.catacombae.jparted.lib.fs.hfscommon.HFSCommonFileSystemHandler;
 //import org.catacombae.jparted.lib.ps.container.ContainerHandler;
 //import org.catacombae.jparted.lib.ps.container.ContainerHandlerFactory;
 
@@ -64,7 +66,7 @@ import org.catacombae.udif.UDIFRandomAccessStream;
  */
 public class UnHFS {
     private static boolean debug = false;
-
+    private static String inputFilename;
     private static final int RETVAL_NEED_PASSWORD = 10;
     private static final int RETVAL_INCORRECT_PASSWORD = 11;
 
@@ -214,7 +216,7 @@ public class UnHFS {
             System.exit(1);
         }
 
-        String inputFilename = args[i];
+        inputFilename = args[i];
         File inputFile = new File(inputFilename);
         if(!(inputFile.exists() && inputFile.isFile() && inputFile.canRead())) {
             System.err.println("Error: Input file \"" + inputFilename + "\" can not be read!");
@@ -388,6 +390,7 @@ public class UnHFS {
 
         FileSystemHandler fsHandler = fact.createHandler(inputDataLocator);
 
+        EMF.getInstance().initialize(fsHandler, inputFilename);
         logDebug("Getting entry by posix path: \"" + fsRoot + "\"");
         FSEntry entry = fsHandler.getEntryByPosixPath(fsRoot);
         if(entry instanceof FSFolder) {

@@ -20,9 +20,14 @@ package org.catacombae.hfsexplorer.fs;
 import org.catacombae.hfsexplorer.Util;
 import org.catacombae.hfsexplorer.io.ForkFilter;
 import org.catacombae.hfsexplorer.io.ReadableRandomAccessSubstream;
+import org.catacombae.hfsexplorer.iphone.EMF;
+import org.catacombae.hfsexplorer.iphone.EMFRandomAccess;
 import org.catacombae.hfsexplorer.types.hfsplus.BTHeaderRec;
 import org.catacombae.hfsexplorer.types.hfsplus.BTNodeDescriptor;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSCatalogNodeID;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeKey;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeLeafNode;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeLeafRecord;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusCatalogKey;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusExtentKey;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusVolumeHeader;
@@ -30,7 +35,14 @@ import org.catacombae.hfsexplorer.types.hfsplus.HFSUniStr255;
 import org.catacombae.hfsexplorer.types.hfsplus.JournalInfoBlock;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonBTHeaderNode;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonBTHeaderRecord;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonBTIndexNode;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonBTIndexRecord;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonBTNodeDescriptor;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonBTNodeDescriptor.NodeType;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSAttributeIndexNode;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSAttributeKey;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSCatalogFile;
+import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSCatalogFileRecord;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSCatalogIndexNode;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSCatalogKey;
 import org.catacombae.hfsexplorer.types.hfscommon.CommonHFSCatalogLeafNode;
@@ -226,4 +238,78 @@ public class ImplHFSPlusFileSystemView extends BaseHFSFileSystemView {
     public CommonHFSCatalogString getEmptyString() {
         return EMPTY_STRING;
     }
+    
+    public HFSPlusAttributeLeafRecord getAttrData(HFSPlusAttributeKey key) {
+		HFSPlusVolumeHeader header = getHFSPlusVolumeHeader();
+
+		ForkFilter ff = new ForkFilter(header.getAttributesFile(),
+				header.getAttributesFile().getExtents().getExtentDescriptors(),
+				new ReadableRandomAccessSubstream(hfsFile), fsOffset, getVolumeHeader().getAllocationBlockSize(),
+				getVolumeHeader().getAllocationBlockStart()*physicalBlockSize);
+
+		CommonBTNodeDescriptor btnd = getNodeDescriptor(ff);
+		CommonBTHeaderRecord bthr = getHeaderRecord(ff);
+		final int nodeSize = bthr.getNodeSize();
+		long currentNodeOffset = bthr.getRootNodeNumber()*nodeSize;
+
+		byte[] currentNodeData = new byte[nodeSize];
+		ff.seek(currentNodeOffset);
+		ff.readFully(currentNodeData);
+		CommonBTNodeDescriptor nodeDescriptor = createCommonBTNodeDescriptor(currentNodeData, 0);
+		CommonHFSAttributeKey commonKey = CommonHFSAttributeKey.create(key);
+		
+		while(nodeDescriptor.getNodeType() == NodeType.INDEX) {
+			CommonBTIndexNode<CommonHFSAttributeKey> currentNode = CommonHFSAttributeIndexNode.createHFSPlus(currentNodeData, 0, nodeSize);
+			CommonBTIndexRecord<CommonHFSAttributeKey> matchingRecord = findLEKey(currentNode, commonKey);
+			if (matchingRecord == null)
+				return null;
+			
+			currentNodeOffset = matchingRecord.getIndex()*nodeSize;
+			ff.seek(currentNodeOffset);
+			ff.readFully(currentNodeData);
+			nodeDescriptor = createCommonBTNodeDescriptor(currentNodeData, 0);
+		}
+		if(nodeDescriptor.getNodeType() == NodeType.LEAF) {
+			HFSPlusAttributeLeafNode leaf = new HFSPlusAttributeLeafNode(currentNodeData, 0, nodeSize);
+			//System.err.println("getOverflowExtent(): Processing leaf node...");
+			HFSPlusAttributeLeafRecord[] recs = leaf.getLeafRecords();
+			for(HFSPlusAttributeLeafRecord rec : recs) {
+				HFSPlusAttributeKey curKey = rec.getKey();
+				if(curKey.compareTo(key) == 0)
+					return rec;
+			}
+		}
+		return null;
+	}
+	
+	@Override
+	public ReadableRandomAccessStream getReadableDataForkStream(
+			CommonHFSCatalogLeafRecord fileRecord) {
+		if (fileRecord instanceof CommonHFSCatalogFileRecord)
+		{
+			CommonHFSCatalogFileRecord fr = (CommonHFSCatalogFileRecord) fileRecord;
+			int id = (int) fr.getData().getFileID().toLong();
+			HFSPlusAttributeKey key = new HFSPlusAttributeKey(id, new HFSUniStr255("com.apple.system.cprotect"));
+			HFSPlusAttributeLeafRecord attr = getAttrData(key);
+			if (attr != null)
+			{
+				System.out.println("file id " + id + " cprotect " + Util.byteArrayToHexString(attr.getData().getAttrData()));
+				
+				byte[] fileKey = EMF.getInstance().unwrapCprotectKey(attr.getData().getAttrData());
+				if (fileKey != null)
+				{
+					CommonHFSCatalogFile catFile = ((CommonHFSCatalogFileRecord)fileRecord).getData();
+				    CommonHFSVolumeHeader header = getVolumeHeader();
+			        return new ForkFilter(catFile.getDataFork(),
+			        		getAllDataExtentDescriptors(fileRecord),
+			        		new EMFRandomAccess(hfsFile, fileKey, header.getAllocationBlockSize()),
+			                fsOffset + fileReadOffset,
+			                header.getAllocationBlockSize(),
+			                header.getAllocationBlockStart() * physicalBlockSize);
+				}
+			}
+			
+		}
+		return super.getReadableDataForkStream(fileRecord);
+	}
 }

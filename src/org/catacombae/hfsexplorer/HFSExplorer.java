@@ -24,7 +24,13 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.LinkedList;
+
+import org.bouncycastle.crypto.InvalidCipherTextException;
+import org.bouncycastle.crypto.Wrapper;
+import org.bouncycastle.crypto.engines.AESWrapEngine;
+import org.bouncycastle.crypto.params.KeyParameter;
 import org.catacombae.hfsexplorer.deprecated.HFSPlusFileSystemView;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeData;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusExtentDescriptor;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusCatalogFolder;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusVolumeHeader;
@@ -38,12 +44,14 @@ import org.catacombae.hfsexplorer.types.hfsplus.HFSCatalogNodeID;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusForkData;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusCatalogLeafRecord;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusCatalogThread;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeKey;
 import org.catacombae.hfsexplorer.io.ForkFilter;
 import org.catacombae.io.ReadableFileStream;
 import org.catacombae.io.ReadableRandomAccessStream;
 import org.catacombae.hfsexplorer.win32.WindowsLowLevelIO;
 import org.catacombae.hfsexplorer.fs.NullProgressMonitor;
 import org.catacombae.hfsexplorer.partitioning.APMPartition;
+
 
 @SuppressWarnings("deprecation") // TODO: Fix HFSExplorer so it doesn't use deprecated methods...
 public class HFSExplorer {
@@ -94,6 +102,18 @@ public class HFSExplorer {
     private static Options options = new Options();
     private static Operation operation;
     private static BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in));
+    
+    
+    public static byte[] hexStringToByteArray(String s) {
+        int len = s.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(s.charAt(i), 16) << 4)
+                                 + Character.digit(s.charAt(i+1), 16));
+        }
+        return data;
+    }
+
     
     public static void main(String[] args) throws IOException {
 	if(args.length == 0) {
@@ -157,9 +177,75 @@ public class HFSExplorer {
 	else if(operation == Operation.FRAGCHECK)
 	    operationFragCheck(operation, isoRaf, offset, length);
 	else if(operation == Operation.TEST)
-	    operationTest(operation, isoRaf, offset, length);
+	    //operationTest(operation, isoRaf, offset, length);
+		operationXattr(operation, isoRaf, offset, length);
+		//System.out.println("toto");
 	else if(operation == Operation.SYSTEMFILEINFO)
 	    operationSystemFileInfo(operation, isoRaf, offset, length);
+		
+    }
+    
+    private static void operationXattr(Operation operation, ReadableRandomAccessStream isoRaf, long offset, long length) throws IOException {
+	    System.out.println("Reading partition data starting at " + offset + "...");
+	    byte[] currentBlock = new byte[512];
+	    isoRaf.seek(offset + 1024);
+	    isoRaf.read(currentBlock);
+	    HFSPlusVolumeHeader header = new HFSPlusVolumeHeader(currentBlock);
+	    //header.print(System.out, "  ");
+	    long attributesFilePosition = header.getBlockSize()*header.getAttributesFile().getExtents().getExtentDescriptor(0).getStartBlock();
+	    long attributesFileLength = header.getBlockSize()*header.getAttributesFile().getExtents().getExtentDescriptor(0).getBlockCount();
+	    isoRaf.seek(offset + attributesFilePosition);
+	    byte[] nodeDescriptorData = new byte[14];
+	    
+	    if(isoRaf.read(nodeDescriptorData) != nodeDescriptorData.length)
+			System.out.println("ERROR: Did not read nodeDescriptor completely.");
+	    BTNodeDescriptor btnd = new BTNodeDescriptor(nodeDescriptorData, 0);
+		
+	    byte[] headerRec = new byte[BTHeaderRec.length()];
+	    if(isoRaf.read(headerRec) != headerRec.length)
+			System.out.println("ERROR: Did not read headerRec completely.");
+	    BTHeaderRec bthr = new BTHeaderRec(headerRec, 0);
+	    int nodeSize = bthr.getNodeSize();
+	    byte[] currentNode = new byte[nodeSize];
+	    
+	    isoRaf.seek(offset + attributesFilePosition);
+	    int nodeNumber = 0;
+	    int bytesRead = nodeSize;
+	    System.out.println("Node size : " + nodeSize);
+	    while((isoRaf.getFilePointer()-attributesFilePosition+nodeSize) <= attributesFileLength) {
+			//System.out.println("FP: " + isoRaf.getFilePointer() + " diff: " + (isoRaf.getFilePointer()-catalogFilePosition) + " (catalogFileLength: " + catalogFileLength + ")");
+			System.out.println("Reading node " + nodeNumber + "...");
+			isoRaf.readFully(currentNode);
+			bytesRead += nodeSize;
+		    
+			BTNodeDescriptor nodeDescriptor = new BTNodeDescriptor(currentNode, 0);
+			System.out.println("  Kind: " + nodeDescriptor.getKindAsString());
+			short[] offsets = new short[nodeDescriptor.getNumRecords()];
+			for(int i = 0; i < offsets.length; ++i) {
+			    offsets[i] = Util.readShortBE(currentNode, currentNode.length-((i+1)*2));
+			}
+		    
+			for(int i = 0; i < offsets.length; ++i) {
+			    int currentOffset = Util.unsign(offsets[i]);
+			    
+			    if(nodeDescriptor.getKind() == BTNodeDescriptor.BT_LEAF_NODE) {
+			    	HFSPlusAttributeKey attrKey = new HFSPlusAttributeKey(currentNode, currentOffset);
+			    	//System.out.println(attrKey.getFileID());
+			    	//System.out.println(attrKey.getAttrName().getUnicodeAsDecomposedString());
+			    	HFSPlusAttributeData attrData = new HFSPlusAttributeData(currentNode, currentOffset + attrKey.length());
+			    	//System.out.println(attrData.getRecordType());
+			    	//System.out.println(attrData.getAttrSize());
+			    	if (attrKey.getAttrName().toString().equals("com.apple.decmpfs"))
+			    	{
+			    		System.out.println("com.apple.decmpfs");
+			    		System.out.println(Util.byteArrayToHexString(attrData.getAttrData()));
+			    		//unWrapTest(attrData.getAttrData());
+			    	}
+			    }
+			}
+			nodeNumber ++;
+	    }
+	    System.out.println("attributesFileLength=" + attributesFileLength);
     }
     
     private static void operationTest(Operation operation, ReadableRandomAccessStream isoRaf, long offset, long length) throws IOException {

@@ -948,7 +948,7 @@ public abstract class BaseHFSFileSystemView {
 	return null;
     }
     
-    private static <K extends CommonBTKey<K>> CommonBTIndexRecord<K> findLEKey(CommonBTIndexNode<K> indexNode, K searchKey) {
+    protected static <K extends CommonBTKey<K>> CommonBTIndexRecord<K> findLEKey(CommonBTIndexNode<K> indexNode, K searchKey) {
 	/* 
 	 * Algorithm:
 	 *   input: Key searchKey

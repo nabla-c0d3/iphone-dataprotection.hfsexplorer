@@ -323,4 +323,9 @@ public class HFSPlusVolumeHeader extends MutableStruct implements StructElements
 
         return db.getResult();
     }
+    
+    public String getVolumeUniqueID() {
+    	int[] fi = getFinderInfo();
+    	return Util.toHexStringBE(fi[6]) + Util.toHexStringBE(fi[7]);
+    }
 }

@@ -22,6 +22,7 @@ import org.catacombae.hfsexplorer.FileSystemBrowser.RecordType;
 import org.catacombae.hfsexplorer.fs.ProgressMonitor;
 import org.catacombae.hfsexplorer.gui.FileOperationsPanel;
 import org.catacombae.hfsexplorer.helpbrowser.HelpBrowserPanel;
+import org.catacombae.hfsexplorer.iphone.EMF;
 import org.catacombae.hfsexplorer.partitioning.Partition;
 import org.catacombae.hfsexplorer.partitioning.PartitionSystem;
 import org.catacombae.hfsexplorer.types.hfs.ExtDescriptor;
@@ -737,6 +738,8 @@ public class FileSystemBrowserWindow extends JFrame {
                 displayName = filename;
             }
             loadFS(fsFile, displayName);
+            System.out.println("pos="+pos);
+            EMF.getInstance().initialize(fsHandler, filename);
         } catch(Exception e) {
             System.err.println("Could not open file! Exception thrown:");
             e.printStackTrace();
@@ -919,7 +922,7 @@ public class FileSystemBrowserWindow extends JFrame {
         //System.out.println("extractForkToStream working with a " + forkFilter.getClass());
         final long originalLength = theFork.getLength();
         long bytesToRead = originalLength;
-        byte[] buffer = new byte[4096];
+        byte[] buffer = new byte[(int) fsHandler.getFSView().getVolumeHeader().getAllocationBlockSize()];
         while(bytesToRead > 0) {
             if(pm.cancelSignaled()) {
                 break;
