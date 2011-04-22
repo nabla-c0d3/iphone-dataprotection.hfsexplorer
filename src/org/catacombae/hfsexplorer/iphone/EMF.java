@@ -50,8 +50,11 @@ public class EMF {
 		ImplHFSPlusFileSystemView hfsplusview = (ImplHFSPlusFileSystemView) fsView;
 		String volumeID = hfsplusview.getHFSPlusVolumeHeader().getVolumeUniqueID();
 		String path;
+		System.out.println(fileName);
 		path = new File(fileName).getParent();
 		System.out.println(path);
+		if (path == null)
+			path = "./";
 		String plistname = path + File.separator + volumeID + ".plist";
 		System.out.println("EMF init : " + volumeID);
 		

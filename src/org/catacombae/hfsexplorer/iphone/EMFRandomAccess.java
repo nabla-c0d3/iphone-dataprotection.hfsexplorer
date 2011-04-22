@@ -81,7 +81,7 @@ public class EMFRandomAccess extends ReadableRandomAccessSubstream {
         	byte[] block = new byte[blockSize];
         	byte[] block_ciphertext = new byte[blockSize];
 			
-	        int x = super.read(block, 0, len);
+	        int x = super.read(block, 0, blockSize);
 	        emf_encrypter.processBytes(block, 0, blockSize, block_ciphertext, 0);
 	        filekey_decrypter.processBytes(block_ciphertext, 0, blockSize, block, 0);
         
