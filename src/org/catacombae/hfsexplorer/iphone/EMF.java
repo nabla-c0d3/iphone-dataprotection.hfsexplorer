@@ -12,6 +12,7 @@ import org.catacombae.hfsexplorer.fs.ImplHFSPlusFileSystemView;
 import org.catacombae.jparted.lib.fs.FileSystemHandler;
 import org.catacombae.jparted.lib.fs.hfscommon.HFSCommonFileSystemHandler;
 
+import com.dd.plist.NSArray;
 import com.dd.plist.NSDictionary;
 import com.dd.plist.NSNumber;
 import com.dd.plist.PropertyListParser;
@@ -21,7 +22,7 @@ public class EMF {
 	private int baseLBA;
 	
 	private boolean isInitialized;
-	private byte[][] classkeys = {
+	private byte[][] classKeys = {
 			null,
 			null,
 			null,
@@ -69,7 +70,21 @@ public class EMF {
 					baseLBA = ((NSNumber)rootDict.objectForKey("dataVolumeOffset")).intValue();
 				System.out.println(emf);
 				emfKey = EMF.hexStringToByteArray(emf);
-				classkeys[3] = EMF.hexStringToByteArray(dkey);
+				classKeys[3] = EMF.hexStringToByteArray(dkey);
+				
+				if (rootDict.objectForKey("classKeys") instanceof NSDictionary)
+				{
+					NSDictionary ck = (NSDictionary) rootDict.objectForKey("classKeys");
+					for(int i=0; i < 3; i++)
+					{
+						String k = ck.objectForKey(""+(i+1)).toString();
+						if (k.length() == 64)
+							classKeys[i] = EMF.hexStringToByteArray(k);
+					}
+				}
+				else
+					System.out.println("No class keys found in plist, only NSProtectionNone files will be decrypted correctly");
+				
 				isInitialized = true;
 			}
 		} catch (Exception e) {
@@ -114,20 +129,21 @@ public class EMF {
 		int protection_class = Util.readIntLE(cprotect, 8);
 		int wrapped_size = Util.readIntLE(cprotect, 12);
 		//System.out.println(protection_class);
-		if ( wrapped_size == 40 && (protection_class -1) < classkeys.length) {
-			byte[] class_key = classkeys[protection_class-1];
+		if ( wrapped_size == 40 && (protection_class -1) < classKeys.length) {
+			byte[] class_key = classKeys[protection_class-1];
 			if (class_key == null)
 			{
 				System.out.println("Missing class key for class " + protection_class);
 				return null;
 			}
+			System.out.println("Protection class : " + protection_class );
 			Wrapper wrapper = new AESWrapEngine();
 			wrapper.init(false, new KeyParameter(class_key));
 			byte[] in = new byte[40];
 			System.arraycopy(cprotect, 16, in, 0, 40);
 			try {
 				byte[] fileKey = wrapper.unwrap(in, 0, in.length);
-				System.out.println("unwrapped = " + Util.byteArrayToHexString(fileKey));
+				System.out.println("file key = " + Util.byteArrayToHexString(fileKey));
 				return fileKey;
 			} catch (InvalidCipherTextException e) {
 				// TODO Auto-generated catch block
