@@ -9,7 +9,9 @@ import org.bouncycastle.crypto.params.KeyParameter;
 import org.catacombae.hfsexplorer.Util;
 import org.catacombae.hfsexplorer.fs.BaseHFSFileSystemView;
 import org.catacombae.hfsexplorer.fs.ImplHFSPlusFileSystemView;
-import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusVolumeHeader;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeKey;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeLeafRecord;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSUniStr255;
 import org.catacombae.jparted.lib.fs.FileSystemHandler;
 import org.catacombae.jparted.lib.fs.hfscommon.HFSCommonFileSystemHandler;
 
@@ -21,10 +23,6 @@ import com.dd.plist.PropertyListParser;
 public class EMF {
 	private static EMF instance = null;
 	private int baseLBA;
-	
-	//HAX: flags set in finderInfo[3] to tell if the image was already decrypted
-	public static final int FLAG_DECRYPTING = 0x454d4664;  //EMFd big endian
-	public static final int FLAG_DECRYPTED = 0x454d4644; //EMFD big endian
 	
 	private boolean isInitialized;
 	private byte[][] classKeys = {
@@ -54,23 +52,36 @@ public class EMF {
 		if (!(fsView instanceof ImplHFSPlusFileSystemView))
 			return false;
 		ImplHFSPlusFileSystemView hfsplusview = (ImplHFSPlusFileSystemView) fsView;
-		HFSPlusVolumeHeader header = hfsplusview.getHFSPlusVolumeHeader();
-		int fi3 = header.getFinderInfo()[3];
-		if (fi3 == FLAG_DECRYPTED || fi3 == FLAG_DECRYPTING)
+		
+		//kHFSRootFolderID=2
+		HFSPlusAttributeKey key = new HFSPlusAttributeKey(2, new HFSUniStr255("com.apple.system.cprotect"));
+		HFSPlusAttributeLeafRecord attr = hfsplusview.getAttrData(key);
+		if (attr == null)
 		{
-			String desc = (fi3 == FLAG_DECRYPTED) ? "already decrypted" : "half-decrypted";
-			System.out.println("Image " + desc + ", doing nothing");
-			return false;
+			System.out.println("No com.apple.system.cprotect extended attribute found on root folder");
 		}
-		String volumeID = header.getVolumeUniqueID();
+		else
+		{
+			byte[] root_cprotect = attr.getData().getAttrData();
+			short xattr_major_version = Util.readShortLE(root_cprotect, 0);
+			if (xattr_major_version != 2 && xattr_major_version != 4)
+			{
+				System.out.println("Unsupported content protection major version : " + xattr_major_version);
+				return false;
+			}
+			System.out.println("Volume cprotect major version : " + xattr_major_version
+				+ " => " + (xattr_major_version == 4 ? "iOS 5" : "iOS 4"));
+		}
+		String volumeID = hfsplusview.getHFSPlusVolumeHeader().getVolumeUniqueID();
 		String path;
-		System.out.println(fileName);
+		//System.out.println(fileName);
 		path = new File(fileName).getParent();
-		System.out.println(path);
+		//System.out.println(path);
 		if (path == null)
 			path = "./";
 		String plistname = path + File.separator + volumeID + ".plist";
-		System.out.println("EMF init : " + volumeID);
+		System.out.println("Volume Unique ID : " + volumeID);
+		System.out.println("Searching for " + plistname);
 		
 		try {
 			NSDictionary rootDict = (NSDictionary)PropertyListParser.parse(new File(plistname));
@@ -81,7 +92,7 @@ public class EMF {
 				
 				if (rootDict.objectForKey("dataVolumeOffset") instanceof NSNumber)
 					baseLBA = ((NSNumber)rootDict.objectForKey("dataVolumeOffset")).intValue();
-				System.out.println(emf);
+				System.out.println("EMF key : " + emf);
 				emfKey = EMF.hexStringToByteArray(emf);
 				classKeys[3] = EMF.hexStringToByteArray(dkey);
 				
@@ -93,6 +104,8 @@ public class EMF {
 						String k = ck.objectForKey(""+(i+1)).toString();
 						if (k.length() == 64)
 							classKeys[i] = EMF.hexStringToByteArray(k);
+						else
+							System.out.println("Class key length != 64 for key " + i);
 					}
 				}
 				else
@@ -137,31 +150,60 @@ public class EMF {
 	}
 	public byte[] unwrapCprotectKey(byte[] cprotect)
 	{
-		if (cprotect.length != 56 || !isInitialized)
+		if (!isInitialized)
 			return null;
+		short xattr_major_version = Util.readShortLE(cprotect, 0);
 		int protection_class = Util.readIntLE(cprotect, 8);
 		int wrapped_size = Util.readIntLE(cprotect, 12);
-		//System.out.println(protection_class);
-		if ( wrapped_size == 40 && (protection_class -1) < classKeys.length) {
-			byte[] class_key = classKeys[protection_class-1];
-			if (class_key == null)
-			{
-				System.out.println("Missing class key for class " + protection_class);
-				return null;
-			}
-			System.out.println("Protection class : " + protection_class );
+		
+		if (wrapped_size > cprotect.length) //TODO: better check
+		{
+			System.out.println("Invalid wrapped_size : " + wrapped_size);
+			return null;
+		}
+		if ((protection_class -1) >= classKeys.length)
+		{
+			System.out.println("Unknown protection class : " + protection_class);
+			return null;
+		}
+		byte[] class_key = classKeys[protection_class-1];
+		if (class_key == null)
+		{
+			System.out.println("Missing class key for class " + protection_class);
+			return null;
+		}
+		
+		byte[] persistent_key = new byte[wrapped_size];
+		if (xattr_major_version == 2)
+		{
+			System.arraycopy(cprotect, 16, persistent_key, 0, wrapped_size);
+		}
+		else if (xattr_major_version == 4)
+		{
+			System.arraycopy(cprotect, 36, persistent_key, 0, wrapped_size);
+		}
+		else
+		{
+			System.out.println("Unknown xattr_major_version : " + xattr_major_version);
+			return null;
+		}
+		if (persistent_key.length == 40)
+		{
 			Wrapper wrapper = new AESWrapEngine();
 			wrapper.init(false, new KeyParameter(class_key));
-			byte[] in = new byte[40];
-			System.arraycopy(cprotect, 16, in, 0, 40);
 			try {
-				byte[] fileKey = wrapper.unwrap(in, 0, in.length);
+				byte[] fileKey = wrapper.unwrap(persistent_key, 0, persistent_key.length);
 				System.out.println("file key = " + Util.byteArrayToHexString(fileKey));
 				return fileKey;
 			} catch (InvalidCipherTextException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
+				System.out.println("Class key " + protection_class + " is most likely wrong, or xattr is corrupted");
 			}
+		}
+		else if(wrapped_size == 0x48 && protection_class == 2)
+		{
+			throw new RuntimeException("NSFileProtectionCompleteUnlessOpen is not supported yet");
 		}
 		return null;
 	}

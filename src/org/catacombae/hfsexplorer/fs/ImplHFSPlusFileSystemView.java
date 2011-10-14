@@ -294,15 +294,16 @@ public class ImplHFSPlusFileSystemView extends BaseHFSFileSystemView {
 			if (attr != null)
 			{
 				System.out.println("file id " + id + " cprotect " + Util.byteArrayToHexString(attr.getData().getAttrData()));
-				
-				byte[] fileKey = EMF.getInstance().unwrapCprotectKey(attr.getData().getAttrData());
+				byte[] cprotect = attr.getData().getAttrData();
+				short xattr_major_version = Util.readShortLE(cprotect, 0);
+				byte[] fileKey = EMF.getInstance().unwrapCprotectKey(cprotect);
 				if (fileKey != null)
 				{
 					CommonHFSCatalogFile catFile = ((CommonHFSCatalogFileRecord)fileRecord).getData();
 				    CommonHFSVolumeHeader header = getVolumeHeader();
 			        return new ForkFilter(catFile.getDataFork(),
 			        		getAllDataExtentDescriptors(fileRecord),
-			        		new EMFRandomAccess(hfsFile, fileKey, header.getAllocationBlockSize()),
+			        		new EMFRandomAccess(hfsFile, fileKey, header.getAllocationBlockSize(), xattr_major_version),
 			                fsOffset + fileReadOffset,
 			                header.getAllocationBlockSize(),
 			                header.getAllocationBlockStart() * physicalBlockSize);
