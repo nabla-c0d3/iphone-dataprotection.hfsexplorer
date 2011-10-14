@@ -11,6 +11,7 @@ import org.catacombae.hfsexplorer.fs.BaseHFSFileSystemView;
 import org.catacombae.hfsexplorer.fs.ImplHFSPlusFileSystemView;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeKey;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusAttributeLeafRecord;
+import org.catacombae.hfsexplorer.types.hfsplus.HFSPlusVolumeHeader;
 import org.catacombae.hfsexplorer.types.hfsplus.HFSUniStr255;
 import org.catacombae.jparted.lib.fs.FileSystemHandler;
 import org.catacombae.jparted.lib.fs.hfscommon.HFSCommonFileSystemHandler;
@@ -23,6 +24,10 @@ import com.dd.plist.PropertyListParser;
 public class EMF {
 	private static EMF instance = null;
 	private int baseLBA;
+	
+	//HAX: flags set in finderInfo[3] to tell if the image was already decrypted
+	public static final int FLAG_DECRYPTING = 0x454d4664;  //EMFd big endian
+	public static final int FLAG_DECRYPTED = 0x454d4644; //EMFD big endian
 	
 	private boolean isInitialized;
 	private byte[][] classKeys = {
@@ -52,6 +57,14 @@ public class EMF {
 		if (!(fsView instanceof ImplHFSPlusFileSystemView))
 			return false;
 		ImplHFSPlusFileSystemView hfsplusview = (ImplHFSPlusFileSystemView) fsView;
+		HFSPlusVolumeHeader header = hfsplusview.getHFSPlusVolumeHeader();
+		int fi3 = header.getFinderInfo()[3];
+		if (fi3 == FLAG_DECRYPTED || fi3 == FLAG_DECRYPTING)
+		{
+			String desc = (fi3 == FLAG_DECRYPTED) ? "already decrypted" : "half-decrypted";
+			System.out.println("Image " + desc + ", doing nothing");
+			return false;
+		}
 		
 		//kHFSRootFolderID=2
 		HFSPlusAttributeKey key = new HFSPlusAttributeKey(2, new HFSUniStr255("com.apple.system.cprotect"));
