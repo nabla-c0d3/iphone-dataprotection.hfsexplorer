@@ -1,6 +1,8 @@
 package org.catacombae.hfsexplorer.iphone;
 
 import java.io.File;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import org.bouncycastle.crypto.InvalidCipherTextException;
 import org.bouncycastle.crypto.Wrapper;
@@ -17,6 +19,7 @@ import org.catacombae.jparted.lib.fs.FileSystemHandler;
 import org.catacombae.jparted.lib.fs.hfscommon.HFSCommonFileSystemHandler;
 
 import com.dd.plist.NSArray;
+import com.dd.plist.NSData;
 import com.dd.plist.NSDictionary;
 import com.dd.plist.NSNumber;
 import com.dd.plist.PropertyListParser;
@@ -37,6 +40,8 @@ public class EMF {
 			null,
 	};
 	private byte[] emfKey;
+	private Keybag keybag;
+	private byte[] pbky;
 	
 	private EMF() {
 		isInitialized = false;
@@ -103,6 +108,11 @@ public class EMF {
 				String emf = rootDict.objectForKey("EMF").toString();
 				String dkey = rootDict.objectForKey("DKey").toString();
 				
+				if (rootDict.objectForKey("KeyBagKeys") instanceof NSData)
+				{
+					keybag = new Keybag(((NSData) rootDict.objectForKey("KeyBagKeys")).bytes());
+					pbky = keybag.getPKBY();
+				}
 				if (rootDict.objectForKey("dataVolumeOffset") instanceof NSNumber)
 					baseLBA = ((NSNumber)rootDict.objectForKey("dataVolumeOffset")).intValue();
 				System.out.println("EMF key : " + emf);
@@ -202,21 +212,54 @@ public class EMF {
 		}
 		if (persistent_key.length == 40)
 		{
-			Wrapper wrapper = new AESWrapEngine();
-			wrapper.init(false, new KeyParameter(class_key));
-			try {
-				byte[] fileKey = wrapper.unwrap(persistent_key, 0, persistent_key.length);
-				System.out.println("file key = " + Util.byteArrayToHexString(fileKey));
-				return fileKey;
-			} catch (InvalidCipherTextException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-				System.out.println("Class key " + protection_class + " is most likely wrong, or xattr is corrupted");
-			}
+			return unwrapFileKey(class_key, persistent_key);
 		}
-		else if(wrapped_size == 0x48 && protection_class == 2)
+		else if(wrapped_size == 72 && protection_class == 2)
 		{
-			throw new RuntimeException("NSFileProtectionCompleteUnlessOpen is not supported yet");
+			if (pbky == null)
+			{
+				System.out.println("Missing PBKY");
+				return null;
+			}
+			byte[] hispublic = new byte[32];
+			byte[] shared = new byte[32];
+			byte[] wrapping_key = new byte[32];
+			byte[] wrapped_file_key = new byte[40];
+			class_key[0] = (byte) (class_key[0] & 248);
+			class_key[31] = (byte) ((class_key[31] & 127) | 64 );
+			
+			System.arraycopy(persistent_key, 0, hispublic, 0, 32);
+			
+			System.out.println("Doing Curve25519");
+			djb.Curve25519.curve(shared, class_key, hispublic);
+			//System.out.println("shared="+Util.byteArrayToHexString(shared));
+			try {
+				MessageDigest md = MessageDigest.getInstance("SHA-256");
+				byte[] cst = {0,0,0,1};
+				md.update(cst);
+				md.update(shared);
+				md.update(hispublic);
+				md.update(pbky);
+				wrapping_key = md.digest();
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+				return null;
+			} 
+			System.arraycopy(persistent_key, 32, wrapped_file_key, 0, 40);
+			return unwrapFileKey(wrapping_key, wrapped_file_key);
+		}
+		return null;
+	}
+	public byte[] unwrapFileKey(byte[] kek, byte[] wrapped_key)
+	{
+		Wrapper wrapper = new AESWrapEngine();
+		wrapper.init(false, new KeyParameter(kek));
+		try {
+			byte[] fileKey = wrapper.unwrap(wrapped_key, 0, wrapped_key.length);
+			System.out.println("file key = " + Util.byteArrayToHexString(fileKey));
+			return fileKey;
+		} catch (InvalidCipherTextException e) {
+			System.out.println("Unwrap FAIL");
 		}
 		return null;
 	}
