@@ -1,6 +1,7 @@
 package org.catacombae.hfsexplorer.iphone;
 
 import java.io.File;
+import java.io.FilenameFilter;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -99,12 +100,27 @@ public class EMF {
 			path = "./";
 		String plistname = path + File.separator + volumeID + ".plist";
 		System.out.println("Volume Unique ID : " + volumeID);
-		System.out.println("Searching for " + plistname);
-		
+		//System.out.println("Searching for " + plistname);
+		 
+		File dir = new File(path);
+		String[] list = dir.list(new FilenameFilter() 
+				{
+					public boolean accept(File dir, String name) {
+						return name.endsWith(".plist");
+					}
+				});
+
+		for (String filename : list){
 		try {
-			NSDictionary rootDict = (NSDictionary)PropertyListParser.parse(new File(plistname));
+			filename = path + File.separator + filename;
+			NSDictionary rootDict = (NSDictionary)PropertyListParser.parse(new File(filename));
+			
+			if (!rootDict.objectForKey("dataVolumeUUID").toString().equals(volumeID))
+				continue;
+				
 			if(rootDict.objectForKey("EMF") != null && rootDict.objectForKey("DKey") != null)
 			{
+				System.out.println("Using plist file " + filename);
 				String emf = rootDict.objectForKey("EMF").toString();
 				String dkey = rootDict.objectForKey("DKey").toString();
 				
@@ -135,10 +151,13 @@ public class EMF {
 					System.out.println("No class keys found in plist, only NSProtectionNone files will be decrypted correctly");
 				
 				isInitialized = true;
+				return isInitialized;
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+		}
+		System.out.println("Matching plist file not found");
 		return isInitialized;
 	}
 	
